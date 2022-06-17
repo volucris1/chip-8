@@ -1,0 +1,17 @@
+* Create tests
+  - [ ] rnd_cxnn ./src/chip8/mod.rs:320
+  - [ ] drw_dxyn ./src/chip8/mod.rs:339
+  - [ ] ld_fx07 ./src/chip8/mod.rs:382
+  - [ ] ld_fx15 ./src/chip8/mod.rs:395
+  - [ ] ld_fx33 ./src/chip8/mod.rs:430
+  - [ ] ld_fx55 ./src/chip8/mod.rs:443
+  - [ ] ld_fx65 ./src/chip8/mod.rs:453
+* Implement
+  - [ ] skp_ex9e ./src/chip8/mod.rs:368
+  - [ ] sknp_exa1 ./src/chip8/mod.rs:373
+  - [ ] ld_fx0a ./src/chip8/mod.rs:391
+  - [ ] ld_fx29 ./src/chip8/mod.rs:424
+
+
+
+
