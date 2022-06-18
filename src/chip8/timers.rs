@@ -25,4 +25,13 @@ impl Timers {
     pub fn set_sound(&mut self, sound: u8) {
         self.sound = sound;
     }
+
+    pub fn countdown(&mut self) {
+        if self.delay > 0 {
+            self.delay -= 1;
+        } 
+        if self.sound > 0 {
+            self.sound -= 1;
+        } 
+    }
 }

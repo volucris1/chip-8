@@ -21,6 +21,10 @@ impl Screen {
     }
 
     pub fn set_xy(&mut self, x: usize, y: usize, v: u8) {
-        self.vram[y][x] = v;
+        self.vram[y][x] ^= v;
+    }
+
+    pub fn vram_mut(&mut self) -> &mut [[u8; 64]; 32] {
+        &mut self.vram
     }
 }

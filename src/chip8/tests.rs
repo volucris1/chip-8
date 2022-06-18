@@ -73,7 +73,7 @@ mod instructions {
     fn ret_00ee() {
         let mut chip8 = Chip8::new();
 
-        chip8.stack.call(123);
+        chip8.stack.push(123);
 
         chip8.ret_00ee();
         assert_eq!(
@@ -273,7 +273,7 @@ mod instructions {
         chip8.v[0x1] = 0x1;
         chip8.opcode.set_from_u16(0x8010);
 
-        chip8.shl_8xye();
+        chip8.shl_8x0e();
         assert_eq!(chip8.v[0xF], 1);
     }
     #[test]

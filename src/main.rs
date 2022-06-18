@@ -5,6 +5,9 @@ use chip8::Chip8;
 mod chip8;
 
 fn main() {
+
+    env_logger::init();
+
     let mut chip8 = Chip8::new();
 
     let path_to_roms = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ROMs"));

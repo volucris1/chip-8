@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fs::File,
     io::Read,
+    process::exit,
     thread,
     time::Duration,
 };
@@ -30,6 +31,7 @@ use self::{
 // use self::screen::Screen;
 use super::chip8::screen::Screen;
 
+mod font;
 mod opcode;
 mod screen;
 mod stack;
@@ -75,7 +77,7 @@ pub struct Chip8 {
 
 impl Chip8 {
     pub fn new() -> Self {
-        let memory = [0; 0x1000];
+        let mut memory = [0; 0x1000];
         let pc = 0x200;
         let opcode = Opcode::new();
         let stack = Stack::new();
@@ -86,6 +88,8 @@ impl Chip8 {
         let timers = Timers::new();
         let keys = HashSet::new();
         let need_redraw = false;
+
+        font::load_font(&mut memory);
 
         Self {
             memory,
@@ -111,7 +115,6 @@ impl Chip8 {
     pub fn load_from_file(&mut self, program: &mut File) {
         let mem = &mut self.memory[0x200..];
         program.read(mem).unwrap();
-        // self.memory[0x200..].copy_from_slice(src)
     }
 
     pub fn run(&mut self) {
@@ -133,7 +136,7 @@ impl Chip8 {
         let bg_color = Color::RGB(0, 0, 0);
         let draw_color = Color::RGB(255, 255, 255);
 
-        let mut prev_keys = HashSet::new();
+        // let mut prev_keys = HashSet::new();
 
         while self.pc < self.memory.len() {
             for event in events.poll_iter() {
@@ -146,13 +149,14 @@ impl Chip8 {
                     _ => {}
                 }
             }
-            let keys = events
-                .keyboard_state()
-                .pressed_scancodes()
-                .filter_map(Keycode::from_scancode)
-                .collect();
+            // let keys = events
+            //     .keyboard_state()
+            //     .pressed_scancodes()
+            //     .filter_map(Keycode::from_scancode)
+            //     .collect();
 
-            self.keys = &keys - &prev_keys;
+            // self.keys = &keys - &prev_keys;
+            self.timers.countdown();
 
             // if self.keypad_waiting {
             //     continue;
@@ -162,6 +166,7 @@ impl Chip8 {
                 sdl_canvas.set_draw_color(bg_color);
                 sdl_canvas.clear();
                 sdl_canvas.set_draw_color(draw_color);
+
                 for py in 0..32 {
                     for px in 0..64 {
                         if self.screen.vram()[py][px] == 1 {
@@ -181,10 +186,12 @@ impl Chip8 {
                 thread::sleep(Duration::new(0, 1_000_000_000 / 60));
                 self.need_redraw = false;
             }
+
+            self.pc += 2;
             self.opcode
                 .set_from_u8(self.memory[self.pc], self.memory[self.pc + 1]);
-            self.pc += 2;
 
+            // println!("Code: {:X}", self.opcode.code());
             match self.opcode.code() & 0xF000 {
                 0x0000 => match self.opcode.code() & 0x00FF {
                     0x00E0 => self.cls_00e0(),
@@ -199,14 +206,15 @@ impl Chip8 {
                 0x6000 => self.ld_6xnn(),
                 0x7000 => self.add_7xnn(),
                 0x8000 => match self.opcode.code() & 0x000F {
-                    0x0001 => self.ld_8xy0(),
-                    0x0002 => self.or_8xy1(),
+                    0x0000 => self.ld_8xy0(),
+                    0x0001 => self.or_8xy1(),
+                    0x0002 => self.and_8xy2(),
                     0x0003 => self.xor_8xy3(),
                     0x0004 => self.add_8xy4(),
                     0x0005 => self.sub_8xy5(),
                     0x0006 => self.shr_8xy6(),
                     0x0007 => self.subn_8xy7(),
-                    0x000E => self.shl_8xye(),
+                    0x000E => self.shl_8x0e(),
                     _ => (),
                 },
                 0x9000 => self.sne_9xy0(),
@@ -241,28 +249,36 @@ impl Chip8 {
     /// Clear the display
     fn cls_00e0(&mut self) {
         self.screen.clear();
+        self.need_redraw = true;
     }
     /// Return from a subroutine.
     ///
     /// The interpreter sets the program counter to the address at the top of
     /// the stack, then subtracts 1 from the stack pointer.
     fn ret_00ee(&mut self) {
+        log::debug!(
+            "Return from subroutine. Current PC: {}, previous: {}",
+            self.pc,
+            self.stack.stack().last().unwrap()
+        );
         self.pc = self.stack.ret() as usize;
+        log::debug!("Returned from subrouting. Current PC: {}", self.pc);
     }
     /// Jump to location nnn.
     ///
     /// The interpreter sets the program counter to nnn.
     fn jp_1nnn(&mut self) {
-        self.pc = self.opcode.nnn();
+        self.pc = self.opcode.nnn() - 2;
     }
     /// Call subroutine at nnn.
     ///
     /// The interpreter increments the stack pointer, then puts the current PC
     /// on the top of the stack. The PC is then set to nnn.
     fn call_2nnn(&mut self) {
+        self.stack.push(self.pc);
+
         let nnn = self.opcode.nnn();
-        self.stack.call(self.pc);
-        self.pc = nnn;
+        self.pc = nnn - 2;
     }
     /// Skip next instruction if Vx = kk.
     ///
@@ -273,7 +289,9 @@ impl Chip8 {
         let vx = self.v[x];
         let nn = self.opcode.nn();
 
-        self.pc += if vx == nn { 2 } else { 0 };
+        if vx == nn {
+            self.pc += 2;
+        };
     }
     /// Skip next instruction if Vx != kk.
     ///
@@ -284,7 +302,9 @@ impl Chip8 {
         let vx = self.v[x];
         let nn = self.opcode.nn();
 
-        self.pc += if vx != nn { 2 } else { 0 };
+        if vx != nn {
+            self.pc += 2;
+        };
     }
     /// Skip next instruction if Vx = Vy.
     ///
@@ -296,7 +316,9 @@ impl Chip8 {
         let y = self.opcode.y();
         let vy = self.v[y];
 
-        self.pc += if vx == vy { 2 } else { 0 };
+        if vx == vy {
+            self.pc += 2;
+        };
     }
     /// Set Vx = kk.
     ///
@@ -312,9 +334,10 @@ impl Chip8 {
     /// Vx.
     fn add_7xnn(&mut self) {
         let x = self.opcode.x();
+        let vx = self.v[x];
         let nn = self.opcode.nn();
 
-        self.v[x] += nn;
+        self.v[x] = vx.wrapping_add(nn);
     }
     /// Set Vx = Vy.
     ///
@@ -393,7 +416,7 @@ impl Chip8 {
 
         self.v[0xF] = if vx > vy { 1 } else { 0 };
 
-        self.v[x] -= vy;
+        self.v[x] = vx.wrapping_sub(vy);
     }
     /// Set Vx = Vx SHR 1.
     ///
@@ -419,17 +442,17 @@ impl Chip8 {
 
         self.v[0xF] = if vy > vx { 1 } else { 0 };
 
-        self.v[x] -= vy;
+        self.v[x] = vy.wrapping_sub(vx);
     }
     /// Set Vx = Vx SHL 1.
     ///
     /// If the most-significant bit of Vx is 1, then VF is set to 1, otherwise
     /// to 0. Then Vx is multiplied by 2.
-    fn shl_8xye(&mut self) {
+    fn shl_8x0e(&mut self) {
         let x = self.opcode.x();
         let vx = self.v[x];
 
-        self.v[0xF] = vx & 0x1;
+        self.v[0xF] = (vx & 0x1) >> 7;
 
         self.v[x] <<= 1;
     }
@@ -462,7 +485,7 @@ impl Chip8 {
         let nnn = self.opcode.nnn();
         let v0 = self.v[0] as usize;
 
-        self.pc = nnn + v0;
+        self.pc = (nnn - 2) + v0;
     }
     /// Set Vx = random byte AND kk.
     ///
@@ -471,7 +494,6 @@ impl Chip8 {
     /// 8xy2 for more information on AND.
     fn rnd_cxnn(&mut self) {
         let x = self.opcode.x();
-        let vx = self.v[x];
         let nn = self.opcode.nn();
         let rn = self.rng.gen::<u8>();
 
@@ -490,27 +512,21 @@ impl Chip8 {
     /// 2.4, Display, for more information on the Chip-8 screen and sprites.
     fn drw_dxyn(&mut self) {
         let x = self.opcode.x();
-        let vx = self.v[x];
         let y = self.opcode.y();
-        let vy = self.v[y];
         let n = self.opcode.n() as usize;
-        let i = self.i as usize;
 
         self.v[0xF] = 0; // reset if collisons were before
-        for byte_ind in 0..n {
-            let sprite_byte = self.memory[i + byte_ind];
-
-            for bit_ind in 0..8 {
-                let bit = (sprite_byte >> bit_ind) & 0x1;
-
-                let scr_y = (vy % 32) as usize;
-                let scr_x = ((vx + bit_ind) % 64) as usize;
-
-                self.v[0xF] |= self.screen.vram()[scr_y][scr_x] & bit;
-
-                self.screen.set_xy(scr_x, scr_y, bit);
+        for byte in 0..n {
+            let y = (self.v[y] as usize + byte) % 32;
+            for bit in 0..8 {
+                let x = (self.v[x] as usize + bit) % 64;
+                let color = (self.memory[self.i + byte] >> (7 - bit)) & 0x1;
+                self.v[0x0F] |= color & self.screen.vram()[y][x];
+                self.screen.set_xy(x, y, color);
             }
         }
+
+        self.need_redraw = true;
     }
 
     /// Skip next instruction if key with the value of Vx is pressed.
@@ -535,7 +551,10 @@ impl Chip8 {
     ///
     /// All execution stops until a key is pressed, then the value of that key
     /// is stored in Vx.
-    fn ld_fx0a(&mut self) {}
+    fn ld_fx0a(&mut self) {
+        log::error!("ld_fx0a is not implemented");
+        exit(-1);
+    }
     /// Set delay timer = Vx.
     ///
     /// DT is set equal to the value of Vx.
@@ -568,7 +587,12 @@ impl Chip8 {
     /// The value of I is set to the location for the hexadecimal sprite
     /// corresponding to the value of Vx. See section 2.4, Display, for more
     /// information on the Chip-8 hexadecimal font.
-    fn ld_fx29(&mut self) {}
+    fn ld_fx29(&mut self) {
+        let x = self.opcode.x();
+        let vx = self.v[x] as usize;
+
+        self.i = vx * 5;
+    }
     /// Store BCD representation of Vx in memory locations I, I+1, and I+2.
     ///
     /// The interpreter takes the decimal value of Vx, and places the hundreds
@@ -579,9 +603,9 @@ impl Chip8 {
         let vx = self.v[x];
 
         let i = self.i;
-        self.memory[i] = (vx / 100) % 100;
+        self.memory[i + 0] = vx / 100;
         self.memory[i + 1] = (vx / 10) % 10;
-        self.memory[i + 2] = (vx / 1) % 1;
+        self.memory[i + 2] = vx % 10;
     }
     /// Store registers V0 through Vx in memory starting at location I.
     ///

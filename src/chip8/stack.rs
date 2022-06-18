@@ -9,7 +9,7 @@ impl Stack {
         Self { stack }
     }
 
-    pub fn call(&mut self, value: usize) {
+    pub fn push(&mut self, value: usize) {
         self.stack.push(value);
     }
 
