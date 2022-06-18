@@ -32,6 +32,7 @@ use self::{
 // use self::screen::Screen;
 use super::chip8::screen::Screen;
 
+mod audio;
 mod font;
 mod hex_to_key;
 mod opcode;
@@ -39,7 +40,6 @@ mod screen;
 mod stack;
 mod tests;
 mod timers;
-mod audio;
 
 pub struct Chip8 {
     /// Chip8 was commonly implemented in 4K system
@@ -76,6 +76,7 @@ pub struct Chip8 {
     timers: Timers,
     keys: HashSet<Keycode>,
     need_redraw: bool,
+    wait_key: bool,
 }
 
 impl Chip8 {
@@ -91,6 +92,7 @@ impl Chip8 {
         let timers = Timers::new();
         let keys = HashSet::new();
         let need_redraw = false;
+        let wait_key = false;
 
         font::load_font(&mut memory);
 
@@ -106,10 +108,10 @@ impl Chip8 {
             timers,
             keys,
             need_redraw,
+            wait_key,
         }
     }
 }
-
 
 impl Chip8 {
     pub fn load_from_file(&mut self, program: &mut File) {
@@ -129,7 +131,7 @@ impl Chip8 {
             .build()
             .unwrap();
         let mut sdl_canvas = sdl_window.into_canvas().build().unwrap();
-        
+
         let device = audio::init(&sdl_cxt);
 
         let bg_color = Color::RGB(0, 0, 0);
@@ -147,6 +149,7 @@ impl Chip8 {
                     _ => {}
                 }
             }
+
             let keys = events
                 .keyboard_state()
                 .pressed_scancodes()
@@ -162,9 +165,10 @@ impl Chip8 {
                 device.pause();
             }
 
-            // if self.keypad_waiting {
-            //     continue;
-            // }
+            if self.wait_key {
+                self.ld_fx0a();
+                continue;
+            }
 
             if self.need_redraw {
                 sdl_canvas.set_draw_color(bg_color);
@@ -253,6 +257,7 @@ impl Chip8 {
 
 impl Chip8 {
     fn is_key_pressed(&self, key: &Keycode) -> bool {
+        log::debug!("Pressed keys: {:?}", self.keys);
         self.keys.contains(key)
     }
 }
@@ -545,7 +550,15 @@ impl Chip8 {
     ///
     /// Checks the keyboard, and if the key corresponding to the value of Vx is
     /// currently in the down position, PC is increased by 2.
-    fn skp_ex9e(&mut self) {}
+    fn skp_ex9e(&mut self) {
+        let x = self.opcode.x();
+        let vx = self.v[x];
+        if let Some(key) = hex_to_key(vx) {
+            if self.is_key_pressed(&key) {
+                self.pc += 2;
+            }
+        };
+    }
     /// Skip next instruction if key with the value of Vx is not pressed.
     ///
     /// Checks the keyboard, and if the key corresponding to the value of Vx is
@@ -572,8 +585,16 @@ impl Chip8 {
     /// All execution stops until a key is pressed, then the value of that key
     /// is stored in Vx.
     fn ld_fx0a(&mut self) {
-        log::error!("ld_fx0a is not implemented");
-        exit(-1);
+        let x = self.opcode.x();
+        let vx = self.v[x];
+        if let Some(key) = hex_to_key(vx) {
+            self.wait_key = if self.is_key_pressed(&key) {
+                self.pc += 2;
+                false
+            } else {
+                true
+            }
+        };
     }
     /// Set delay timer = Vx.
     ///
