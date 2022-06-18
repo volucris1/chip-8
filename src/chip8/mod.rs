@@ -23,6 +23,7 @@ use sdl2::{
 };
 
 use self::{
+    hex_to_key::hex_to_key,
     opcode::Opcode,
     stack::Stack,
     timers::Timers,
@@ -32,11 +33,13 @@ use self::{
 use super::chip8::screen::Screen;
 
 mod font;
+mod hex_to_key;
 mod opcode;
 mod screen;
 mod stack;
 mod tests;
 mod timers;
+mod audio;
 
 pub struct Chip8 {
     /// Chip8 was commonly implemented in 4K system
@@ -107,11 +110,8 @@ impl Chip8 {
     }
 }
 
-impl Chip8 {
-    pub fn load_from_vec(&mut self, program: &Vec<u8>) {
-        self.memory[0x200..].copy_from_slice(&program);
-    }
 
+impl Chip8 {
     pub fn load_from_file(&mut self, program: &mut File) {
         let mem = &mut self.memory[0x200..];
         program.read(mem).unwrap();
@@ -120,24 +120,22 @@ impl Chip8 {
     pub fn run(&mut self) {
         let sdl_cxt = sdl2::init().unwrap();
         let sdl_video_ss = sdl_cxt.video().unwrap();
+        let mut events = sdl_cxt.event_pump().unwrap();
 
         let scale = 10;
-
         let sdl_window = sdl_video_ss
             .window("Chip-8 emulator", 64 * scale, 32 * scale)
             .position_centered()
             .build()
             .unwrap();
-
         let mut sdl_canvas = sdl_window.into_canvas().build().unwrap();
-
-        let mut events = sdl_cxt.event_pump().unwrap();
+        
+        let device = audio::init(&sdl_cxt);
 
         let bg_color = Color::RGB(0, 0, 0);
-        let draw_color = Color::RGB(255, 255, 255);
+        let draw_color = Color::RGB(255, 0, 255);
 
-        // let mut prev_keys = HashSet::new();
-
+        let mut prev_keys = HashSet::new();
         while self.pc < self.memory.len() {
             for event in events.poll_iter() {
                 match event {
@@ -149,14 +147,20 @@ impl Chip8 {
                     _ => {}
                 }
             }
-            // let keys = events
-            //     .keyboard_state()
-            //     .pressed_scancodes()
-            //     .filter_map(Keycode::from_scancode)
-            //     .collect();
-
-            // self.keys = &keys - &prev_keys;
+            let keys = events
+                .keyboard_state()
+                .pressed_scancodes()
+                .filter_map(Keycode::from_scancode)
+                .collect();
+            self.keys = &keys - &prev_keys;
             self.timers.countdown();
+
+            if self.timers.sound() > 0 {
+                device.resume();
+                thread::sleep(Duration::new(0, 1_000_000_000 / 60));
+            } else {
+                device.pause();
+            }
 
             // if self.keypad_waiting {
             //     continue;
@@ -187,7 +191,6 @@ impl Chip8 {
                 self.need_redraw = false;
             }
 
-            self.pc += 2;
             self.opcode
                 .set_from_u8(self.memory[self.pc], self.memory[self.pc + 1]);
 
@@ -241,7 +244,16 @@ impl Chip8 {
                 },
                 _ => (),
             }
+
+            self.pc += 2;
+            prev_keys = self.keys.clone();
         }
+    }
+}
+
+impl Chip8 {
+    fn is_key_pressed(&self, key: &Keycode) -> bool {
+        self.keys.contains(key)
     }
 }
 
@@ -538,7 +550,15 @@ impl Chip8 {
     ///
     /// Checks the keyboard, and if the key corresponding to the value of Vx is
     /// currently in the up position, PC is increased by 2.
-    fn sknp_exa1(&mut self) {}
+    fn sknp_exa1(&mut self) {
+        let x = self.opcode.x();
+        let vx = self.v[x];
+        if let Some(key) = hex_to_key(vx) {
+            if !self.is_key_pressed(&key) {
+                self.pc += 2;
+            }
+        };
+    }
     /// Set Vx = delay timer value.
     ///
     /// The value of DT is placed into Vx
@@ -613,7 +633,7 @@ impl Chip8 {
     /// memory, starting at the address in I.
     fn ld_fx55(&mut self) {
         let x = self.opcode.x();
-        for i in 0..(x + 1) {
+        for i in 0..=x {
             self.memory[self.i + i] = self.v[i];
         }
     }
@@ -623,7 +643,7 @@ impl Chip8 {
     /// registers V0 through Vx.
     fn ld_fx65(&mut self) {
         let x = self.opcode.x();
-        for i in 0..(x + 1) {
+        for i in 0..=x {
             self.v[i] = self.memory[self.i + i];
         }
     }
