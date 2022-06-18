@@ -20,10 +20,15 @@ use sdl2::{
     event::Event,
     pixels::Color,
     rect::Rect,
+    EventPump,
+    Sdl,
 };
 
 use self::{
-    hex_to_key::hex_to_key,
+    hex_to_key::{
+        hex_to_key,
+        key_to_hex,
+    },
     opcode::Opcode,
     stack::Stack,
     timers::Timers,
@@ -74,9 +79,10 @@ pub struct Chip8 {
     i: usize,
     rng: ThreadRng,
     timers: Timers,
-    keys: HashSet<Keycode>,
     need_redraw: bool,
     wait_key: bool,
+    sdl_cxt: Sdl,
+    events: EventPump,
 }
 
 impl Chip8 {
@@ -90,9 +96,10 @@ impl Chip8 {
         let i = 0;
         let rng = thread_rng();
         let timers = Timers::new();
-        let keys = HashSet::new();
         let need_redraw = false;
         let wait_key = false;
+        let sdl_cxt = sdl2::init().unwrap();
+        let events = sdl_cxt.event_pump().unwrap();
 
         font::load_font(&mut memory);
 
@@ -106,10 +113,17 @@ impl Chip8 {
             i,
             rng,
             timers,
-            keys,
             need_redraw,
             wait_key,
+            sdl_cxt,
+            events,
         }
+    }
+}
+
+impl Default for Chip8 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -120,9 +134,7 @@ impl Chip8 {
     }
 
     pub fn run(&mut self) {
-        let sdl_cxt = sdl2::init().unwrap();
-        let sdl_video_ss = sdl_cxt.video().unwrap();
-        let mut events = sdl_cxt.event_pump().unwrap();
+        let sdl_video_ss = self.sdl_cxt.video().unwrap();
 
         let scale = 10;
         let sdl_window = sdl_video_ss
@@ -130,16 +142,19 @@ impl Chip8 {
             .position_centered()
             .build()
             .unwrap();
+
         let mut sdl_canvas = sdl_window.into_canvas().build().unwrap();
 
-        let device = audio::init(&sdl_cxt);
+        let device = audio::init(&self.sdl_cxt);
 
         let bg_color = Color::RGB(0, 0, 0);
-        let draw_color = Color::RGB(255, 0, 255);
+        let draw_color = Color::RGB(0, 255, 0);
 
-        let mut prev_keys = HashSet::new();
+        // let mut prev_keys = HashSet::new();
         while self.pc < self.memory.len() {
-            for event in events.poll_iter() {
+            thread::sleep(Duration::new(0, 1_000_000_000 / 60));
+
+            for event in self.events.poll_iter() {
                 match event {
                     Event::Quit { .. }
                     | Event::KeyDown {
@@ -149,27 +164,6 @@ impl Chip8 {
                     _ => {}
                 }
             }
-
-            let keys = events
-                .keyboard_state()
-                .pressed_scancodes()
-                .filter_map(Keycode::from_scancode)
-                .collect();
-            self.keys = &keys - &prev_keys;
-            self.timers.countdown();
-
-            if self.timers.sound() > 0 {
-                device.resume();
-                thread::sleep(Duration::new(0, 1_000_000_000 / 60));
-            } else {
-                device.pause();
-            }
-
-            if self.wait_key {
-                self.ld_fx0a();
-                continue;
-            }
-
             if self.need_redraw {
                 sdl_canvas.set_draw_color(bg_color);
                 sdl_canvas.clear();
@@ -191,8 +185,19 @@ impl Chip8 {
 
                 sdl_canvas.present();
 
-                thread::sleep(Duration::new(0, 1_000_000_000 / 60));
                 self.need_redraw = false;
+            }
+
+            if self.wait_key {
+                self.ld_fx0a();
+                continue;
+            }
+
+            self.timers.countdown();
+            if self.timers.sound() > 0 {
+                device.resume();
+            } else {
+                device.pause();
             }
 
             self.opcode
@@ -250,15 +255,27 @@ impl Chip8 {
             }
 
             self.pc += 2;
-            prev_keys = self.keys.clone();
         }
     }
 }
 
 impl Chip8 {
+    fn get_pressed_keys(&self) -> HashSet<Keycode> {
+        let keys: HashSet<Keycode> = self
+            .events
+            .keyboard_state()
+            .pressed_scancodes()
+            .filter_map(Keycode::from_scancode)
+            .collect();
+
+        keys
+    }
     fn is_key_pressed(&self, key: &Keycode) -> bool {
-        log::debug!("Pressed keys: {:?}", self.keys);
-        self.keys.contains(key)
+        let keys = self.get_pressed_keys();
+        log::debug!("Pressed keys: {:?}", keys);
+        let pressed = keys.contains(key);
+        log::debug!("Key: {}, is {}", key, &pressed);
+        pressed
     }
 }
 
@@ -586,15 +603,15 @@ impl Chip8 {
     /// is stored in Vx.
     fn ld_fx0a(&mut self) {
         let x = self.opcode.x();
-        let vx = self.v[x];
-        if let Some(key) = hex_to_key(vx) {
-            self.wait_key = if self.is_key_pressed(&key) {
-                self.pc += 2;
-                false
-            } else {
-                true
+
+        self.wait_key = true;
+        let pressed_keys = self.get_pressed_keys();
+        if pressed_keys.len() > 0 {
+            if let Some(key) = key_to_hex(pressed_keys.iter().next().unwrap().clone()) {
+                self.wait_key = false;
+                self.v[x] = key;
             }
-        };
+        }
     }
     /// Set delay timer = Vx.
     ///
